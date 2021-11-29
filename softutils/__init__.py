@@ -5,3 +5,5 @@
 # Excusa. Quod scripsi, scripsi.
 
 # by d.zashkonyi
+
+from ._function import *

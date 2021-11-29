@@ -6,6 +6,7 @@
 
 # by d.zashkonyi
 
+from __future__ import annotations
 from threading import RLock
 import typing as typ
 import inspect
@@ -70,6 +71,8 @@ ELEMENTARY_FUNCTIONS = {
     'exp':  (np.exp, -inf, inf),
     'sinh': (np.sinh, -inf, inf),
     'cosh': (np.cosh, -inf, inf),
+    'tanh': (np.tanh, -inf, inf),
+    'sigmoid': (lambda x: 1 / (1 + np.exp(x)), -inf, inf),
 }
 
 LOCK = RLock()
@@ -91,7 +94,7 @@ class NotInitialisedVarError(TypeError):
         return f"Call for not initialised variable: {self.name}."
 
 
-class Var:
+class _Var:
 
     __instances = {}
 
@@ -145,7 +148,7 @@ class Var:
         return self._value
 
     def __eq__(self, other):
-        if isinstance(other, Var):
+        if isinstance(other, _Var):
             return self.name == other.name
         elif isinstance(other, str):
             return self.name == other
@@ -176,19 +179,19 @@ class Var:
 #      - add domains for elementary functions
 #      -
 
-class Function:
+class _Function:
 
     delta_x = 10e-5
 
-    def __init__(self, main_op: str, variables: typ.Set[Var],
-                 *sons: typ.Union[typ.Callable, float, int],
+    def __init__(self, main_op: str, variables: typ.Set[_Var],
+                 *sons: typ.Union[typ.Callable, float, int, _Function],
                  name='', str_repr='', check_signature=True, **superpos_sons):
         assert main_op in OPERATORS, 'bad operation'
-        assert all(isinstance(var, Var) for var in variables), 'bad variable'
+        assert all(isinstance(var, _Var) for var in variables), 'bad variable'
         assert not (len(sons) > 1 and main_op in UNARY_OPERATORS), 'bad amount of sons'
         assert not (len(sons) != 2 and main_op in BINARY_OPERATORS), 'bad amount of sons'
         assert not (main_op in BINARY_OPERATORS and
-                    any(not isinstance(son, Function) for son in sons)), 'bad type of sons'
+                    any(not isinstance(son, _Function) for son in sons)), 'bad type of sons'
 
         assert not (len(sons) != 1 and main_op == SUPERPOSITION
                     and len(superpos_sons) == 0 ), 'bad superposition format'
@@ -221,14 +224,14 @@ class Function:
 
     def _check_superposition(self):
         given_vars = set(self._superpos_sons.keys())
-        func = self._sons[0]    # type: Function
+        func = self._sons[0]    # type: _Function
         if given_vars != func._vars:
             raise ValueError(f"Bad set of variables are given: "
                              f"expected {func._vars}, got {self._superpos_sons}")
 
         sons_vars = set()
         for el in self._superpos_sons.values():
-            if not isinstance(el, Function):
+            if not isinstance(el, _Function):
                 raise TypeError(f"Element with type for superposition: {el}")
             sons_vars |= el._vars
 
@@ -248,18 +251,18 @@ class Function:
                              f"expected {self._vars}, got {signature}")
 
     def _binary(self, other, operation_type):
-        assert isinstance(other, Function) or isinstance(other, Var) \
-            or isinstance(other, int) or isinstance(other, float), 'bad operand'
+        assert isinstance(other, _Function) or isinstance(other, _Var) \
+               or isinstance(other, int) or isinstance(other, float), 'bad operand'
         assert operation_type in BINARY_OPERATORS, 'bad operation'
 
-        if isinstance(other, Var):
-            res_other = Function(FROM_VAR, {other}, other)
+        if isinstance(other, _Var):
+            res_other = _Function(FROM_VAR, {other}, other)
         elif isinstance(other, float) or isinstance(other, int):
-            res_other = Function(FROM_CONST, set(), other)
+            res_other = _Function(FROM_CONST, set(), other)
         else:
             res_other = other
-        return Function(operation_type, self._vars | res_other._vars,
-                        self, res_other)
+        return _Function(operation_type, self._vars | res_other._vars,
+                         self, res_other)
 
     def __add__(self, other):
         return self._binary(other, ADDITION)
@@ -297,18 +300,18 @@ class Function:
         res_vars = set()
         for var in self._vars:
             value = others[var.name]
-            if isinstance(value, Function):
+            if isinstance(value, _Function):
                 res_kwargs[var.name] = value
-            elif isinstance(value, Var):
-                res_kwargs[var.name] = from_var_factory(value)
+            elif isinstance(value, _Var):
+                res_kwargs[var.name] = _from_var_factory(value)
             elif isinstance(value, int) or isinstance(value, float):
-                res_kwargs[var.name] = from_const_factory(value)
+                res_kwargs[var.name] = _from_const_factory(value)
             else:
                 raise TypeError(f"Element with unknown type for superposition: {value}")
 
             res_vars |= res_kwargs[var.name]._vars
 
-        return Function(SUPERPOSITION, res_vars, self, name='', **res_kwargs)
+        return _Function(SUPERPOSITION, res_vars, self, name='', **res_kwargs)
 
     def __call__(self, **kwargs):
         if self._main_op == FROM_VAR:
@@ -336,7 +339,7 @@ class Function:
         elif self._main_op == SUPERPOSITION:
             res_kwargs = {}
             for var, func in self._superpos_sons.items():
-                if isinstance(var, Var):
+                if isinstance(var, _Var):
                     res_kwargs[var.name] = func(**kwargs)
                 elif isinstance(var, str):
                     res_kwargs[var] = func(**kwargs)
@@ -351,18 +354,18 @@ class Function:
         else:
             raise WTFError()
 
-    def _partial_complex_der(self, var: Var):
+    def _partial_complex_der(self, var: _Var):
         assert var in self._vars
         assert self._main_op == SUPERPOSITION
-        res = from_const_factory(0)
-        F = self._sons[0]         # type: Function
+        res = _from_const_factory(0)
+        F = self._sons[0]         # type: _Function
 
         str_rep = ''
         # sum of ( dF / d _sub_var ) * (d _sub_var / d var)
         for _sub_var in F._vars:
             dFdf = F.partial_derivative(_sub_var)
             dFdf = dFdf.substitute(**self._superpos_sons)
-            f = self._superpos_sons[_sub_var.name]  # type: Function
+            f = self._superpos_sons[_sub_var.name]  # type: _Function
             dfdx = f.partial_derivative(var)
             add = dFdf * dfdx
             res += add
@@ -371,7 +374,7 @@ class Function:
         res.set_str_repr(str_rep)
         return res
 
-    def _simple_derivative(self, var: Var):
+    def _simple_derivative(self, var: _Var):
         assert self._main_op == FROM_FUNC
         assert var in self._vars
         func = self._sons[0]    # type: callable
@@ -387,13 +390,13 @@ class Function:
             return (f1 - f2) / (self.delta_x * 2)
 
         # TODO: add name
-        return Function(FROM_FUNC, self._vars, res_func, check_signature=False,
-                        str_repr=f'd/d{var} ({self})')
+        return _Function(FROM_FUNC, self._vars, res_func, check_signature=False,
+                         str_repr=f'd/d{var} ({self})')
 
-    def partial_derivative(self, var: Var):
+    def partial_derivative(self, var: _Var):
 
         if var not in self._vars:
-            return from_const_factory(0)
+            return _from_const_factory(0)
 
         if self._main_op == SUPERPOSITION:
             return self._partial_complex_der(var)
@@ -402,31 +405,34 @@ class Function:
             return self._simple_derivative(var)
 
         elif self._main_op == FROM_VAR:
-            return from_const_factory(1)
+            return _from_const_factory(1)
 
         elif self._main_op == FROM_CONST:
-            return from_const_factory(0)
+            return _from_const_factory(0)
 
         elif self._main_op in BINARY_OPERATORS:
             return self._binary_op_derivative(var)
         else:
             raise WTFError()
 
-    def _binary_op_derivative(self, var: Var):
+    def _binary_op_derivative(self, var: _Var):
         assert var in self._vars
-        u = self._sons[0]   # type: Function
-        v = self._sons[1]   # type: Function
+        u = self._sons[0]   # type: _Function
+        v = self._sons[1]   # type: _Function
         u_der = u.partial_derivative(var)
         v_der = v.partial_derivative(var)
 
-        res = SIMPLE_DERIVATIVES[self._main_op](u, v, u_der, v_der)  # type: Function
+        res = SIMPLE_DERIVATIVES[self._main_op](u, v, u_der, v_der)  # type: _Function
         return res
 
-    def partial_derivative_n(self, *variables: Var):
+    def partial_derivative_n(self, *variables: _Var):
         res = self
         for var in variables:
             res = res.partial_derivative(var)
         return res
+
+    def gradient(self):
+        return [self.partial_derivative(var) for var in self._vars]
 
     def get_vars(self):
         return self._vars
@@ -436,8 +442,8 @@ class Function:
             raise NotImplementedError()
 
         if isinstance(power, int):
-            tmp_var = Var("___tmp_var___")
-            tmp_func = ElementaryFunction('pow', tmp_var, n=power)
+            tmp_var = _Var("___tmp_var___")
+            tmp_func = _ElementaryFunction('pow', tmp_var, n=power)
             return tmp_func.substitute(___tmp_var___=self)
         else:
             raise NotImplementedError()
@@ -458,14 +464,14 @@ class Function:
                 return str(self._sons[0])
 
             elif self._main_op == SUPERPOSITION:
-                func = self._sons[0]  # type: Function
+                func = self._sons[0]  # type: _Function
                 res_doc = str(func)
                 for el in func.get_vars():
                     res_doc = res_doc.replace(str(el), str(self._superpos_sons[el]))
                 return res_doc
 
             elif self._main_op in BINARY_OPERATORS:
-                f, g = self._sons[0], self._sons[1]   # type: Function
+                f, g = self._sons[0], self._sons[1]   # type: _Function
                 if self._main_op == R_DIVISION:
                     return f'({g} {DIVISION} {f})'
                 elif self._main_op == R_SUBTRACTION:
@@ -479,9 +485,10 @@ class Function:
         return str(self)
 
 
-class ElementaryFunction(Function):
+# TODO: replace with _from_func_factory for every elementary function
+class _ElementaryFunction(_Function):
 
-    def __init__(self, func_name, variable: Var, n=2):
+    def __init__(self, func_name, variable: _Var, n=2):
         if func_name not in ELEMENTARY_FUNCTIONS:
             raise NotImplementedError("Unknown function type")
 
@@ -493,47 +500,51 @@ class ElementaryFunction(Function):
 
         if self._el_type == 'pow':
             if n == 1:
-                super(ElementaryFunction, self).__init__(FROM_VAR, {variable},
-                                                         variable)
+                super(_ElementaryFunction, self).__init__(FROM_VAR, {variable},
+                                                          variable)
             elif n == 0:
-                super(ElementaryFunction, self).__init__(FROM_CONST, set(), 0)
+                super(_ElementaryFunction, self).__init__(FROM_CONST, set(), 0)
             else:
                 func = get_power(n)
-                super(ElementaryFunction, self).__init__(FROM_FUNC, {variable},
-                                                         func, name=f'pow{n}',
-                                                         check_signature=False)
+                super(_ElementaryFunction, self).__init__(FROM_FUNC, {variable},
+                                                          func, name=f'pow{n}',
+                                                          check_signature=False)
         else:
-            super(ElementaryFunction, self).__init__(FROM_FUNC, {variable}, func,
-                                                     name=func_name, check_signature=False)
+            super(_ElementaryFunction, self).__init__(FROM_FUNC, {variable}, func,
+                                                      name=func_name, check_signature=False)
 
-    def _simple_derivative(self, var: Var):
+    def _simple_derivative(self, var: _Var):
         assert self._main_op == FROM_FUNC
         assert var in self._vars
 
         if self._el_type == 'sin':
-            return ElementaryFunction('cos', var)
+            return _ElementaryFunction('cos', var)
         elif self._el_type == 'cos':
-            return ElementaryFunction('sin', var) * (-1)
+            return _ElementaryFunction('sin', var) * (-1)
         elif self._el_type == 'sqrt':
-            nom = from_const_factory(1)
-            denom = ElementaryFunction('sqrt', var) * 2
+            nom = _from_const_factory(1)
+            denom = _ElementaryFunction('sqrt', var) * 2
             return nom / denom
         elif self._el_type == 'tan':
-            nom = from_const_factory(1)
-            denom = ElementaryFunction('cos', var) ** 2
+            nom = _from_const_factory(1)
+            denom = _ElementaryFunction('cos', var) ** 2
             return nom / denom
         elif self._el_type == 'log':
-            nom = from_const_factory(1)
-            denom = from_var_factory(var)
+            nom = _from_const_factory(1)
+            denom = _from_var_factory(var)
             return nom / denom
         elif self._el_type == 'sinh':
-            return ElementaryFunction('cosh', var)
+            return _ElementaryFunction('cosh', var)
         elif self._el_type == 'cosh':
-            return ElementaryFunction('sinh', var)
+            return _ElementaryFunction('sinh', var)
+        elif self._el_type == 'tanh':
+            return _from_const_factory(1) - _ElementaryFunction('tanh', var) ** 2
+        elif self._el_type == 'sigmoid':
+            return _from_var_factory(var) * (1 - _from_var_factory(var))
         elif self._el_type == 'exp':
-            return ElementaryFunction('exp', var)
+            return _ElementaryFunction('exp', var)
         elif self._el_type == 'pow':
-            return ElementaryFunction('pow', var, self._n-1) * self._n
+            return _ElementaryFunction('pow', var, self._n - 1) * self._n
         else:
             raise NotImplementedError()
 
@@ -545,39 +556,58 @@ class ElementaryFunction(Function):
                 value = var()
             return self._sons[0](value)
         else:
-            return super(ElementaryFunction, self).__call__(**kwargs)
+            return super(_ElementaryFunction, self).__call__(**kwargs)
 
 
-def from_func_factory(func: callable, variables: typ.Set[Var], name=''):
-    return Function(FROM_FUNC,    variables, func, name=name)
+def _from_func_factory(func: callable, variables: typ.Set[_Var], name=''):
+    return _Function(FROM_FUNC, variables, func, name=name)
 
 
-def from_var_factory(var: Var):
-    return Function(FROM_VAR, {var}, var)
+def _from_var_factory(var: _Var):
+    return _Function(FROM_VAR, {var}, var)
 
 
-def from_const_factory(const: typ.Union[int, float]):
-    return Function(FROM_CONST, set(), const)
+def _from_const_factory(const: typ.Union[int, float]):
+    return _Function(FROM_CONST, set(), const)
 
 
 def _elementary_factory(name: str):
 
-    def _res_factory(x: typ.Union[Function, int, float, Var]) -> Function:
+    def _res_factory(x: typ.Union[_Function, int, float, _Var]) -> _Function:
         if isinstance(x, int) or isinstance(x, float):
             func, _, _ = ELEMENTARY_FUNCTIONS[name]
-            return from_const_factory(func(x))
+            return _from_const_factory(func(x))
 
-        elif isinstance(x, Var):
-            return ElementaryFunction(name, x)
+        elif isinstance(x, _Var):
+            return _ElementaryFunction(name, x)
 
-        elif isinstance(x, Function):
-            tmp_var = Var('___tmp___')
-            tmp_func = ElementaryFunction(name, tmp_var)
+        elif isinstance(x, _Function):
+            tmp_var = _Var('___tmp___')
+            tmp_func = _ElementaryFunction(name, tmp_var)
             return tmp_func.substitute(___tmp___=x)
         else:
             raise TypeError(f"Unknown variable type: {x}")
 
     return _res_factory
+
+
+def Var(name, left=float('-inf'), right=float('inf')):
+    return _from_var_factory(_Var(name, left, right))
+
+
+def Const(const):
+    return _from_const_factory(const)
+
+
+def Function(**kwargs):
+    if 'func' in kwargs:
+        return _from_func_factory(**kwargs)
+    elif 'var' in kwargs:
+        return _from_var_factory(**kwargs)
+    elif 'const' in kwargs:
+        return _from_const_factory(**kwargs)
+    else:
+        raise NotImplementedError()
 
 
 cos = _elementary_factory('cos')
@@ -588,3 +618,5 @@ log = _elementary_factory('log')
 sinh = _elementary_factory('sinh')
 cosh = _elementary_factory('cosh')
 exp = _elementary_factory('exp')
+tanh = _elementary_factory('tanh')
+sigmoid = _elementary_factory('sigmoid')
