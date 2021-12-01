@@ -8,7 +8,8 @@
 
 import softutils as sf
 
-test = sf.sigmoid(sf.sin(sf.cos(sf.Var('x')) + sf.tan(sf.Var('y'))))
+test = sf.relu(sf.sigmoid(sf.sin(sf.cos(sf.Var('x')) + sf.tan(sf.Var('y')))))
 print(test)
 print(test.partial_derivative('x'))
 print(test.gradient())
+print(test.partial_derivative('x').partial_derivative('x'))

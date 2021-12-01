@@ -73,6 +73,8 @@ ELEMENTARY_FUNCTIONS = {
     'cosh': (np.cosh, -inf, inf),
     'tanh': (np.tanh, -inf, inf),
     'sigmoid': (lambda x: 1 / (1 + np.exp(x)), -inf, inf),
+    'relu': (lambda x: np.max(x, 0), -inf, inf),
+    'relu_der': (lambda x: x > 0, -inf, inf),
 }
 
 LOCK = RLock()
@@ -541,6 +543,10 @@ class _ElementaryFunction(_Function):
             return _from_const_factory(1) - _ElementaryFunction('tanh', var) ** 2
         elif self._el_type == 'sigmoid':
             return _from_var_factory(var) * (1 - _from_var_factory(var))
+        elif self._el_type == 'relu':
+            return _ElementaryFunction('relu_der', var)
+        elif self._el_type == 'relu_der':
+            return _from_const_factory(0)
         elif self._el_type == 'exp':
             return _ElementaryFunction('exp', var)
         elif self._el_type == 'pow':
@@ -620,3 +626,4 @@ cosh = _elementary_factory('cosh')
 exp = _elementary_factory('exp')
 tanh = _elementary_factory('tanh')
 sigmoid = _elementary_factory('sigmoid')
+relu = _elementary_factory('relu')
