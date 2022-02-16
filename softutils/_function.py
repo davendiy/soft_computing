@@ -96,14 +96,22 @@ class NotInitialisedVarError(TypeError):
         return f"Call for not initialised variable: {self.name}."
 
 
-class _Var:
+class NamewiseSingleton(type):
 
-    __instances = {}
+    _lock = RLock()
 
-    def __new__(cls, name: str, left=float('-inf'), right=float('inf')):
+    def __init__(cls, name, bases, dct):
+        super().__init__(name, bases, dct)
+        cls.__instances = {}
+
+    def __call__(cls, name, *args, **kwargs):
         if name not in cls.__instances:
-            cls.__instances[name] = super().__new__(cls)
+            with cls._lock:
+                cls.__instances[name] = super().__call__(name, *args, **kwargs)
         return cls.__instances[name]
+
+
+class _Var(metaclass=NamewiseSingleton):
 
     def __init__(self, name: str, left=float('-inf'), right=float('inf')):
         self.name = name
@@ -208,7 +216,7 @@ class _Function:
                     any(not isinstance(son, _Function) for son in sons)), 'bad type of sons'
 
         assert not (len(sons) != 1 and main_op == SUPERPOSITION
-                    and len(superpos_sons) == 0 ), 'bad superposition format'
+                    and len(superpos_sons) == 0), 'bad superposition format'
 
         self._main_op = main_op
         self._vars = variables
@@ -308,6 +316,7 @@ class _Function:
         """ return f(...) = self(other(...))
         """
         given_pars = set(others.keys())
+        # noinspection PyTypeChecker
         if self._vars - given_pars:
             raise ValueError(f"Not enough parameters: expected {self._vars}, "
                              f"got {given_pars}")
@@ -342,6 +351,7 @@ class _Function:
 
         elif self._main_op == FROM_FUNC:
             given_keys = set(kwargs.keys())
+            # noinspection PyTypeChecker
             if not kwargs:
                 kwargs = {var.name: var() for var in self._vars}
 
@@ -409,7 +419,7 @@ class _Function:
         return _Function(FROM_FUNC, self._vars, res_func, check_signature=False,
                          str_repr=f'd/d{var} ({self})')
 
-    def partial_derivative(self, var: _Var):
+    def partial_derivative(self, var: typ.Union[_Var, str]):
 
         if var not in self._vars:
             return _from_const_factory(0)
@@ -519,6 +529,7 @@ class _Function:
                 func = self._sons[0]  # type: _Function
                 res_doc = str(func)
                 for el in func.get_vars():
+                    # noinspection PyTypeChecker
                     res_doc = res_doc.replace(str(el), str(self._superpos_sons[el]))
                 return res_doc
 
@@ -607,6 +618,7 @@ class _ElementaryFunction(_Function):
     def __call__(self, **kwargs):
         if self._main_op == FROM_FUNC:
             var = next(iter(self._vars))
+            # noinspection PyTypeChecker
             value = kwargs.get(var, None)
             if value is None:
                 value = var()
@@ -649,14 +661,17 @@ def _elementary_factory(name: str):
     return _res_factory
 
 
+# noinspection PyPep8Naming
 def Var(name, left=float('-inf'), right=float('inf')):
     return _from_var_factory(_Var(name, left, right))
 
 
+# noinspection PyPep8Naming
 def Const(const):
     return _from_const_factory(const)
 
 
+# noinspection PyPep8Naming
 def Function(**kwargs):
     if 'func' in kwargs:
         return _from_func_factory(**kwargs)

@@ -1,0 +1,6 @@
+numpy
+bitstring
+plotly
+tqdm
+sklearn
+matplotlib
