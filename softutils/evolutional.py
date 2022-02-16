@@ -82,14 +82,13 @@ class EvolutionalStrategy(MinimizationAlgorithm):
         return np.array([fitness.mean(), fitness[parents_idx[0]]]), parents[0]
 
     def _generate_offsprings(self, parents: np.ndarray) -> np.ndarray:
-        offsprings = np.empty((self.lmb, 2))
-        for i in range(self.lmb):
-            curr_parents_idx = np.random.choice(self.mu, self.rho)
-            curr_parents = parents[curr_parents_idx]
-            offsprings[i] = curr_parents.mean(axis=0)
+        offsprings = parents[:self.mu]
+
         return offsprings
 
     def _mutation(self, offsprings: np.ndarray) -> np.ndarray:
+        res = []
         for i in range(offsprings.shape[0]):
-            offsprings[i] += np.random.normal(loc=0, scale=self.mutation_std, size=offsprings.shape[1])
-        return offsprings
+            for j in range(self.lmb):
+                res.append(offsprings[i] + np.random.normal(loc=0, scale=self.mutation_std, size=offsprings.shape[1]))
+        return np.array(offsprings)

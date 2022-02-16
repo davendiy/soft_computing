@@ -128,9 +128,9 @@ class _Var:
         return self._left
 
     @left.setter
-    def left(self, left: typ.Union[float, int]):
+    def left(self, value: typ.Union[float, int]):
         with LOCK:
-            self._left = left
+            self._left = value
 
     @property
     def right(self):
@@ -140,6 +140,18 @@ class _Var:
     def right(self, right: typ.Union[float, int]):
         with LOCK:
             self._right = right
+
+    def random_value(self, size=1):
+        if self._left > -inf and self._right < inf:
+            if size > 1:
+                return np.random.uniform(self._left, self._right, size=size)
+            else:
+                return np.random.uniform(self._left, self._right, size=size)[0]
+        else:
+            if size > 1:
+                return np.random.normal(0, 1, size=size)
+            else:
+                return np.random.normal(0, 1, size=size)[0]
 
     def __hash__(self):
         return hash(self.name)
@@ -253,8 +265,10 @@ class _Function:
                              f"expected {self._vars}, got {signature}")
 
     def _binary(self, other, operation_type):
-        assert isinstance(other, _Function) or isinstance(other, _Var) \
-               or isinstance(other, int) or isinstance(other, float), 'bad operand'
+        if not any(isinstance(other, _type)
+                   for _type in [_Function, _Var, int, float]):
+            other = float(other)
+
         assert operation_type in BINARY_OPERATORS, 'bad operation'
 
         if isinstance(other, _Var):
@@ -433,6 +447,42 @@ class _Function:
             res = res.partial_derivative(var)
         return res
 
+    def optimize(self, *variables: str, algo='gradient_descent',
+                 max_iterations=100, eps=10e-5, eta=0.01, dest='max', **fixed_vars):
+        params = {var: _Var(var).random_value() for var in variables}
+        params.update(fixed_vars)
+        if algo != 'gradient_descent':
+            raise NotImplementedError()
+
+        multiplier = 1 if dest == 'max' else -1
+        for var in params:
+            if not isinstance(var, str): print(var, type(var))
+        assert all(isinstance(var, str) for var in params)
+        cur_value = self(**params)
+        history = [cur_value]
+        for _ in range(max_iterations):
+            for var in variables:
+                der = self.partial_derivative(var)
+                der = der(**params)
+                params[var] += multiplier * eta * der
+            next_value = self(**params)
+            history.append(next_value)
+            # if abs(next_value - cur_value) < eps:
+            #     break
+            cur_value = next_value
+
+        return history, [params[var] for var in variables]
+
+    def minimize(self, *variables: _Var, algo='gradient_descent', max_iterations=1000,
+                 eps=10e-5, eta=0.01, **fixed_vars):
+        return self.optimize(*variables, algo=algo, max_iterations=max_iterations, eps=eps,
+                             dest='min', eta=eta, **fixed_vars)
+
+    def maximize(self, *variables: _Var, algo='gradient_descent', max_iterations=1000,
+                 eps=10e-5, eta=0.01, **fixed_vars):
+        return self.optimize(*variables, algo=algo, max_iterations=max_iterations, eps=eps,
+                             dest='max', eta=eta, **fixed_vars)
+
     def gradient(self):
         return [self.partial_derivative(var) for var in self._vars]
 
@@ -574,6 +624,8 @@ def _from_var_factory(var: _Var):
 
 
 def _from_const_factory(const: typ.Union[int, float]):
+    if not isinstance(const, int):
+        const = float(const)
     return _Function(FROM_CONST, set(), const)
 
 

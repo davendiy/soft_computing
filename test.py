@@ -13,3 +13,8 @@ print(test)
 print(test.partial_derivative('x'))
 print(test.gradient())
 print(test.partial_derivative('x').partial_derivative('x'))
+
+
+test2 = sf.sin(sf.Var('x') ** 2 + sf.Var('y') ** 2)
+print(test2.minimize('x', eta=0.01, y=1))
+print(test2.maximize('x', eta=0.01, y=1))
